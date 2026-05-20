@@ -4,12 +4,36 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import torch
 from PIL import Image
 
 from data_loader import get_model_path
 
 if TYPE_CHECKING:
     from ultralytics import YOLO
+
+
+def patch_torchvision_fake_registration() -> None:
+    original_register_fake = torch.library.register_fake
+
+    if getattr(original_register_fake, "_yolo26_safe_patch", False):
+        return
+
+    def safe_register_fake(op_name: str):
+        decorator = original_register_fake(op_name)
+
+        def wrapped(fn):
+            try:
+                return decorator(fn)
+            except RuntimeError as exc:
+                if op_name == "torchvision::nms" and "does not exist" in str(exc):
+                    return fn
+                raise
+
+        return wrapped
+
+    safe_register_fake._yolo26_safe_patch = True  # type: ignore[attr-defined]
+    torch.library.register_fake = safe_register_fake
 
 
 def build_detection_records(
@@ -43,6 +67,7 @@ def build_detection_records(
 
 @lru_cache(maxsize=1)
 def load_model() -> YOLO:
+    patch_torchvision_fake_registration()
     from ultralytics import YOLO
 
     model_path = get_model_path()

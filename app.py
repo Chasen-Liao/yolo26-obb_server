@@ -81,35 +81,37 @@ def run_demo(selected_image: str):
 
 
 def build_app():
-    import gradio as gr
+    import streamlit as st
 
     sample_images = list_sample_images()
     default_value = sample_images[0] if sample_images else None
 
-    with gr.Blocks(title="YOLO OBB 样例图地理检测 Demo") as demo:
-        gr.Markdown("# YOLO OBB 样例图地理检测 Demo")
-        gr.Markdown("选择 `sample_100_mix/` 中的一张图片，执行一次 OBB 检测并查看地理结果。")
-        with gr.Row():
-            image_selector = gr.Dropdown(
-                choices=sample_images,
-                value=default_value,
-                label="样例图片",
-            )
-            run_button = gr.Button("开始检测", variant="primary")
+    st.set_page_config(page_title="YOLO OBB 样例图地理检测 Demo", layout="wide")
+    st.title("YOLO OBB 样例图地理检测 Demo")
+    st.write("选择 `sample_100_mix/` 中的一张图片，执行一次 OBB 检测并查看地理结果。")
 
-        status = gr.Markdown("请选择一张样例图后开始检测。")
-        image_summary = gr.HTML(EMPTY_SUMMARY_HTML)
-        result_image = gr.Image(label="检测结果图", type="pil")
-        detection_details = gr.HTML(EMPTY_DETECTIONS_HTML)
+    selected_image = st.selectbox("样例图片", options=sample_images, index=0 if default_value else None)
+    trigger = st.button("开始检测", type="primary")
 
-        run_button.click(
-            fn=run_demo,
-            inputs=image_selector,
-            outputs=[status, image_summary, result_image, detection_details],
-        )
+    if not trigger:
+        st.info("请选择一张样例图后开始检测。")
+        st.markdown(EMPTY_SUMMARY_HTML, unsafe_allow_html=True)
+        st.markdown(EMPTY_DETECTIONS_HTML, unsafe_allow_html=True)
+        return
 
-    return demo
+    status, summary_html, plotted_image, details_html = run_demo(selected_image)
+    if status == "检测完成。":
+        st.success(status)
+    elif status == "未检测到目标。":
+        st.warning(status)
+    else:
+        st.error(status)
+
+    st.markdown(summary_html, unsafe_allow_html=True)
+    if plotted_image is not None:
+        st.image(plotted_image, caption="检测结果图", use_container_width=True)
+    st.markdown(details_html, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
-    build_app().launch(server_name="0.0.0.0")
+    build_app()
