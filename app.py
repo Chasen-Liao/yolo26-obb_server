@@ -58,6 +58,15 @@ def render_detection_details(detections: list[dict[str, Any]], limit: int = 5) -
     return "\n".join(blocks)
 
 
+def get_preview_image_path(selected_image: str) -> str | None:
+    if not selected_image:
+        return None
+    try:
+        return str(get_image_path(selected_image))
+    except FileNotFoundError:
+        return None
+
+
 def run_demo(selected_image: str):
     if not selected_image:
         return "请选择一张样例图。", EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
@@ -90,7 +99,17 @@ def build_app():
     st.title("YOLO OBB 样例图地理检测 Demo")
     st.write("选择 `sample_100_mix/` 中的一张图片，执行一次 OBB 检测并查看地理结果。")
 
-    selected_image = st.selectbox("样例图片", options=sample_images, index=0 if default_value else None)
+    left_col, right_col = st.columns([2, 1])
+    with left_col:
+        selected_image = st.selectbox("样例图片", options=sample_images, index=0 if default_value else None)
+    with right_col:
+        st.caption("当前选中图片预览")
+        preview_image_path = get_preview_image_path(selected_image)
+        if preview_image_path is not None:
+            st.image(preview_image_path, caption=selected_image, use_container_width=True)
+        else:
+            st.info("暂无可预览图片。")
+
     trigger = st.button("开始检测", type="primary")
 
     if not trigger:

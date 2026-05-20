@@ -1,5 +1,5 @@
 from app import render_detection_details, render_image_summary
-from app import EMPTY_DETECTIONS_HTML, EMPTY_SUMMARY_HTML, run_demo
+from app import EMPTY_DETECTIONS_HTML, EMPTY_SUMMARY_HTML, get_preview_image_path, run_demo
 
 
 def test_render_image_summary_includes_center_coordinates():
@@ -126,3 +126,9 @@ def test_run_demo_returns_placeholder_on_known_errors(monkeypatch):
     assert summary_html == EMPTY_SUMMARY_HTML
     assert result_image is None
     assert details_html == EMPTY_DETECTIONS_HTML
+
+
+def test_get_preview_image_path_returns_selected_image_path(monkeypatch):
+    monkeypatch.setattr("app.get_image_path", lambda filename: f"/tmp/{filename}")
+    assert get_preview_image_path("demo.jpg") == "/tmp/demo.jpg"
+    assert get_preview_image_path("") is None
