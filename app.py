@@ -64,8 +64,11 @@ def run_demo(selected_image: str):
         plotted_image, detections = run_inference(image_path)
         summary = build_image_summary(selected_image)
         enriched_detections = attach_geo_centers(selected_image, detections)
-    except (FileNotFoundError, KeyError) as exc:
+    except FileNotFoundError as exc:
         return str(exc), EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
+    except KeyError as exc:
+        message = exc.args[0] if exc.args else "缺少必要字段"
+        return str(message), EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
 
     status_text = "检测完成。" if enriched_detections else "未检测到目标。"
     return (

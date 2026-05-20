@@ -122,7 +122,7 @@ def test_run_demo_returns_placeholder_on_known_errors(monkeypatch):
     monkeypatch.setattr("app.run_inference", lambda _: (_ for _ in ()).throw(KeyError("missing geo")))
 
     status, summary_html, result_image, details_html = run_demo("demo.jpg")
-    assert status == "'missing geo'"
+    assert status == "missing geo"
     assert summary_html == EMPTY_SUMMARY_HTML
     assert result_image is None
     assert details_html == EMPTY_DETECTIONS_HTML
