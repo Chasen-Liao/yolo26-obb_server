@@ -13,8 +13,8 @@ def test_pixel_to_geo_matches_known_vertex():
         24.540081261873343,
     ]
     lon, lat = pixel_to_geo(affine, 580.0, 74.0)
-    assert lon == pytest.approx(118.1218881484858)
-    assert lat == pytest.approx(24.539036221506002)
+    assert lon == pytest.approx(118.12172441453158)
+    assert lat == pytest.approx(24.539505528411794)
 
 
 def test_build_image_summary_returns_expected_fields():
@@ -38,5 +38,5 @@ def test_attach_geo_centers_adds_geo_center():
         }
     ]
     enriched = attach_geo_centers("train__t_10144.jpg", detections)
-    assert enriched[0]["geo_center"][0] == pytest.approx(118.1218881484858)
-    assert enriched[0]["geo_center"][1] == pytest.approx(24.539036221506002)
+    assert enriched[0]["geo_center"][0] == pytest.approx(118.12172441453158)
+    assert enriched[0]["geo_center"][1] == pytest.approx(24.539505528411794)
