@@ -112,7 +112,7 @@ def test_run_demo_returns_placeholder_on_known_errors(monkeypatch):
     monkeypatch.setattr("app.get_image_path", lambda _: (_ for _ in ()).throw(FileNotFoundError("missing file")))
 
     assert run_demo("demo.jpg") == (
-        "missing file",
+        "图片文件不存在或无法读取。",
         EMPTY_SUMMARY_HTML,
         None,
         EMPTY_DETECTIONS_HTML,
@@ -122,7 +122,7 @@ def test_run_demo_returns_placeholder_on_known_errors(monkeypatch):
     monkeypatch.setattr("app.run_inference", lambda _: (_ for _ in ()).throw(KeyError("missing geo")))
 
     status, summary_html, result_image, details_html = run_demo("demo.jpg")
-    assert status == "missing geo"
+    assert status == "地理信息缺失，无法完成映射。"
     assert summary_html == EMPTY_SUMMARY_HTML
     assert result_image is None
     assert details_html == EMPTY_DETECTIONS_HTML

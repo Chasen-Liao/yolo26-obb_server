@@ -10,6 +10,8 @@ from inference import run_inference
 
 EMPTY_SUMMARY_HTML = "<p>暂无图片信息。</p>"
 EMPTY_DETECTIONS_HTML = "<p>暂无检测结果。</p>"
+FILE_READ_ERROR_MESSAGE = "图片文件不存在或无法读取。"
+GEO_MAPPING_ERROR_MESSAGE = "地理信息缺失，无法完成映射。"
 
 
 def render_image_summary(summary: dict[str, Any]) -> str:
@@ -64,11 +66,10 @@ def run_demo(selected_image: str):
         plotted_image, detections = run_inference(image_path)
         summary = build_image_summary(selected_image)
         enriched_detections = attach_geo_centers(selected_image, detections)
-    except FileNotFoundError as exc:
-        return str(exc), EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
-    except KeyError as exc:
-        message = exc.args[0] if exc.args else "缺少必要字段"
-        return str(message), EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
+    except FileNotFoundError:
+        return FILE_READ_ERROR_MESSAGE, EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
+    except KeyError:
+        return GEO_MAPPING_ERROR_MESSAGE, EMPTY_SUMMARY_HTML, None, EMPTY_DETECTIONS_HTML
 
     status_text = "检测完成。" if enriched_detections else "未检测到目标。"
     return (
