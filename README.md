@@ -15,11 +15,13 @@ python -m pip install -r requirements.txt
 ```
 
 ## 运行方式
+当前仓库处于 Task 1 阶段，尚未提供可直接运行的 `app.py`。后续实现完成后，计划使用以下命令启动：
+
 ```bash
 python app.py
 ```
 
-启动后在浏览器中打开 Gradio 输出的地址。
+届时启动后可在浏览器中打开 Gradio 输出的地址。
 
 ## 当前限制
 - 仅支持 `sample_100_mix/` 目录中的样例图

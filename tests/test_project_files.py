@@ -19,3 +19,4 @@ def test_readme_describes_demo_usage():
     assert "Gradio" in readme
     assert "sample_100_mix" in readme
     assert "python app.py" in readme
+    assert "后续实现完成后" in readme
