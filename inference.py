@@ -18,9 +18,13 @@ def build_detection_records(
     confidences: list[float],
     class_names: dict[int, str],
 ) -> list[dict[str, Any]]:
+    if not (len(polygons) == len(class_ids) == len(confidences)):
+        raise ValueError("polygons, class_ids, and confidences must have the same length")
+
     records: list[dict[str, Any]] = []
     for index, (polygon, class_id, confidence) in enumerate(zip(polygons, class_ids, confidences)):
         normalized_polygon = [[float(x), float(y)] for x, y in polygon]
+        # pixel_center uses the average center of the OBB polygon vertices.
         center_x = sum(point[0] for point in normalized_polygon) / len(normalized_polygon)
         center_y = sum(point[1] for point in normalized_polygon) / len(normalized_polygon)
         numeric_class_id = int(class_id)
