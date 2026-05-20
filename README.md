@@ -2,6 +2,10 @@
 
 这是一个基于 `sample_100_mix/` 样例图与 `yolo26n_obb_fair1m.pt` 权重的轻量 `Streamlit` demo。
 
+## 效果图
+
+![图](image.png)
+
 ## 功能
 
 - 从 `sample_100_mix/` 中选择样例图
