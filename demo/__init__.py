@@ -1,0 +1,1 @@
+"""Demo package for the YOLO OBB geographic detection app."""

@@ -3,9 +3,14 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from data_loader import get_image_path, list_sample_images
-from geo_mapper import attach_geo_centers, build_image_summary
-from inference import run_inference
+try:
+    from .data_loader import get_image_path, list_sample_images
+    from .geo_mapper import attach_geo_centers, build_image_summary
+    from .inference import run_inference
+except ImportError:
+    from data_loader import get_image_path, list_sample_images
+    from geo_mapper import attach_geo_centers, build_image_summary
+    from inference import run_inference
 
 
 EMPTY_SUMMARY_HTML = "<p>暂无图片信息。</p>"

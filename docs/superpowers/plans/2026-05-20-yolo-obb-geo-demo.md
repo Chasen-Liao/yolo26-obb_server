@@ -1,261 +1,1119 @@
-# YOLO OBB 样例图地理检测 Demo Implementation Plan
+# YOLO OBB Geo API Service Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 构建一个仅面向 `sample_100_mix/` 的 Gradio 网页 demo，能对样例图执行 OBB 检测，展示检测结果图、图片中心点经纬度，以及最多 5 个折叠的检测框中心点经纬度信息。
+**Goal:** 构建一个整体风格对齐 `/data/RK/yolov8_server/` 的 FastAPI 服务，上传 `sample_100_mix/` 中对应图片文件后返回 OBB 检测结果、图片中心经纬度、检测框中心像素点和检测框中心经纬度，并支持同步、异步、配置和指标接口。
 
-**Architecture:** 采用单页 Gradio 应用作为界面层，使用 `inference.py` 封装 OBB 模型推理，使用 `data_loader.py` 读取样例图与 `geo.json` 元数据，使用 `geo_mapper.py` 负责像素点到经纬度的换算与结果整理。页面层只做输入选择、状态展示和 HTML 结果渲染，不引入独立 API 服务。
+**Architecture:** 保留 `demo/` 目录中的现有推理与地理映射能力，在根目录新增 `obb_geo_service.py` 负责模型加载、图片解码、文件名匹配、地理结果组装；新增 `obb_geo_api_server.py` 负责 FastAPI 路由、鉴权、配置、同步检测、异步任务和指标输出。测试分为服务层单测、同步接口测试、异步接口测试和文档/依赖测试。
 
-**Tech Stack:** Python 3、Gradio、Ultralytics YOLO、Pillow、Pytest
+**Tech Stack:** Python 3、FastAPI、Uvicorn、python-multipart、Ultralytics YOLO、Pillow、Pytest、httpx
 
 ---
 
-### Task 1: 引导项目依赖与基础文档
+## File Structure
+
+- `requirements.txt`：补充 API 运行与测试依赖
+- `obb_geo_service.py`：服务层，处理上传图片、地理匹配、OBB 推理和结果组装
+- `obb_geo_api_server.py`：API 层，提供 `/v1/*` 路由、异步任务和 metrics
+- `tests/conftest.py`：测试通用 fixture，如上传文件 bytes 和样例图片名
+- `tests/test_api_project_files.py`：依赖与基础测试资源检查
+- `tests/test_obb_geo_service.py`：服务层单元测试
+- `tests/test_obb_geo_api_sync.py`：同步接口测试
+- `tests/test_obb_geo_api_async.py`：异步、metrics 与任务管理测试
+- `README.md`：API 服务启动和调用说明
+
+### Task 1: 补齐 API 依赖与测试夹具
 
 **Files:**
-- Create: `.gitignore`
-- Create: `requirements.txt`
-- Create: `README.md`
-- Create: `tests/test_project_files.py`
+- Modify: `requirements.txt`
+- Create: `tests/conftest.py`
+- Create: `tests/test_api_project_files.py`
 
-- [ ] **Step 1: 写基础文件的失败测试**
+- [ ] **Step 1: 写依赖与测试夹具的失败测试**
+
+`tests/test_api_project_files.py`
 
 ```python
 from pathlib import Path
 
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_required_project_files_exist():
-    for filename in [".gitignore", "requirements.txt", "README.md"]:
-        assert (ROOT / filename).exists(), f"missing {filename}"
-
-
-def test_requirements_list_runtime_dependencies():
+def test_requirements_include_api_dependencies():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
-    for package_name in ["gradio", "ultralytics", "pillow", "pytest"]:
+    for package_name in ["fastapi", "uvicorn", "python-multipart", "httpx", "pytest"]:
         assert package_name in requirements
 
 
-def test_readme_describes_demo_usage():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Gradio" in readme
-    assert "sample_100_mix" in readme
-    assert "python app.py" in readme
+def test_test_fixtures_module_exists():
+    fixture_file = ROOT / "tests" / "conftest.py"
+    assert fixture_file.exists(), "missing tests/conftest.py"
 ```
 
 - [ ] **Step 2: 运行测试，确认它失败**
 
-Run: `python -m pytest tests/test_project_files.py -q`
-Expected: FAIL，提示缺少 `.gitignore`、`requirements.txt` 或 `README.md`
+Run: `python -m pytest tests/test_api_project_files.py -q`
+Expected: FAIL，提示 `requirements.txt` 缺少 `fastapi`、`uvicorn`、`python-multipart` 或缺少 `tests/conftest.py`
 
 - [ ] **Step 3: 写最小实现**
-
-`.gitignore`
-
-```gitignore
-__pycache__/
-.pytest_cache/
-.venv/
-.gradio/
-```
 
 `requirements.txt`
 
 ```text
-gradio>=4.44,<5.0
+streamlit>=1.45,<2.0
 ultralytics>=8.3,<9.0
 pillow>=10.0,<11.0
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+python-multipart>=0.0.9,<1.0
+httpx>=0.27,<1.0
 pytest>=8.0,<9.0
 ```
 
-`README.md`
+`tests/conftest.py`
 
-```markdown
-# YOLO OBB 样例图地理检测 Demo
+```python
+from __future__ import annotations
 
-这是一个基于 `sample_100_mix/` 样例图与 `yolo26n_obb_fair1m.pt` 权重的轻量 Gradio demo。
+import io
+from pathlib import Path
 
-## 功能
-- 从 `sample_100_mix/` 中选择样例图
-- 使用 OBB 模型执行单图检测
-- 展示带检测框的结果图
-- 展示图片中心点经纬度
-- 展示最多 5 个折叠的检测框中心点经纬度结果
+import pytest
+from PIL import Image
 
-## 环境准备
-```bash
-python -m pip install -r requirements.txt
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def sample_upload_name() -> str:
+    return "train__t_10144.jpg"
+
+
+@pytest.fixture
+def sample_png_bytes() -> bytes:
+    image = Image.new("RGB", (16, 16), color=(12, 34, 56))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def sample_dataset_image_path(sample_upload_name: str) -> Path:
+    return ROOT / "sample_100_mix" / sample_upload_name
 ```
 
-## 运行方式
-```bash
-python app.py
-```
+- [ ] **Step 4: 重新运行测试**
 
-启动后在浏览器中打开 Gradio 输出的地址。
-
-## 当前限制
-- 仅支持 `sample_100_mix/` 目录中的样例图
-- 不支持上传自定义图片
-- 不返回检测框四角点经纬度
-```
-
-- [ ] **Step 4: 安装依赖并重新运行测试**
-
-Run: `python -m pip install -r requirements.txt && python -m pytest tests/test_project_files.py -q`
+Run: `python -m pytest tests/test_api_project_files.py -q`
 Expected: PASS
 
 - [ ] **Step 5: 提交本任务改动**
 
 ```bash
-git add .gitignore requirements.txt README.md tests/test_project_files.py
-git commit -m "chore: add geo demo project scaffold"
+git add requirements.txt tests/conftest.py tests/test_api_project_files.py
+git commit -m "chore: add api service dependencies and fixtures"
 ```
 
-### Task 2: 实现样例图与地理元数据加载
+### Task 2: 实现服务层的图片解码、地理匹配与检测结果组装
 
 **Files:**
-- Create: `data_loader.py`
-- Create: `geo_mapper.py`
-- Create: `tests/test_data_loader.py`
-- Create: `tests/test_geo_mapper.py`
+- Create: `obb_geo_service.py`
+- Create: `tests/test_obb_geo_service.py`
 
-- [ ] **Step 1: 写数据加载与坐标映射的失败测试**
+- [ ] **Step 1: 写服务层失败测试**
 
-`tests/test_data_loader.py`
-
-```python
-from data_loader import get_image_geo_record, get_image_path, list_sample_images
-
-
-def test_list_sample_images_contains_known_files():
-    images = list_sample_images()
-    assert "train__t_10144.jpg" in images
-    assert "val__v_611.jpg" in images
-
-
-def test_get_image_path_resolves_existing_sample():
-    image_path = get_image_path("train__t_10144.jpg")
-    assert image_path.name == "train__t_10144.jpg"
-    assert image_path.exists()
-
-
-def test_get_image_geo_record_reads_expected_center():
-    record = get_image_geo_record("train__t_10144.jpg")
-    assert record["image_name"] == "t_10144.jpg"
-    assert record["center"] == [118.1210570438674, 24.536394476542437]
-```
-
-`tests/test_geo_mapper.py`
-
-```python
-import pytest
-
-from geo_mapper import attach_geo_centers, build_image_summary, pixel_to_geo
-
-
-def test_pixel_to_geo_matches_known_vertex():
-    affine = [
-        7.995924900143336e-06,
-        -6.474383933152695e-08,
-        118.1170915691336,
-        -5.944766583354522e-08,
-        -7.314240748161893e-06,
-        24.540081261873343,
-    ]
-    lon, lat = pixel_to_geo(affine, 580.0, 74.0)
-    assert lon == pytest.approx(118.1218881484858)
-    assert lat == pytest.approx(24.539036221506002)
-
-
-def test_build_image_summary_returns_expected_fields():
-    summary = build_image_summary("train__t_10144.jpg")
-    assert summary["image_name"] == "train__t_10144.jpg"
-    assert summary["width"] == 1000
-    assert summary["height"] == 1000
-    assert summary["center_lon"] == pytest.approx(118.1210570438674)
-    assert summary["center_lat"] == pytest.approx(24.536394476542437)
-
-
-def test_attach_geo_centers_adds_geo_center():
-    detections = [
-        {
-            "index": 0,
-            "class_id": 0,
-            "class_name": "plane",
-            "confidence": 0.91,
-            "polygon": [[580.0, 74.0], [580.0, 74.0], [580.0, 74.0], [580.0, 74.0]],
-            "pixel_center": [580.0, 74.0],
-        }
-    ]
-    enriched = attach_geo_centers("train__t_10144.jpg", detections)
-    assert enriched[0]["geo_center"][0] == pytest.approx(118.1218881484858)
-    assert enriched[0]["geo_center"][1] == pytest.approx(24.539036221506002)
-```
-
-- [ ] **Step 2: 运行测试，确认它失败**
-
-Run: `python -m pytest tests/test_data_loader.py tests/test_geo_mapper.py -q`
-Expected: FAIL，提示 `ModuleNotFoundError` 或缺少待实现函数
-
-- [ ] **Step 3: 写最小实现**
-
-`data_loader.py`
+`tests/test_obb_geo_service.py`
 
 ```python
 from __future__ import annotations
 
-import json
-from functools import lru_cache
+import numpy as np
+import pytest
+
+from obb_geo_service import OBBGeoDetectionConfig, OBBGeoDetectionError, OBBGeoService
+
+
+class _FakeResult:
+    def __init__(self):
+        self.names = {0: "ship"}
+
+    def plot(self):
+        return np.zeros((8, 8, 3), dtype=np.uint8)
+
+
+class _FakeModel:
+    def __init__(self):
+        self.calls = []
+
+    def predict(self, source, imgsz, conf, iou, verbose):
+        self.calls.append(
+            {
+                "size": source.size,
+                "imgsz": imgsz,
+                "conf": conf,
+                "iou": iou,
+                "verbose": verbose,
+            }
+        )
+        return [_FakeResult()]
+
+
+def test_load_raises_when_model_path_missing(tmp_path):
+    service = OBBGeoService(OBBGeoDetectionConfig(model_path=str(tmp_path / "missing.pt")))
+    with pytest.raises(OBBGeoDetectionError, match="Model file not found"):
+        service.load()
+
+
+def test_detect_returns_geo_enriched_payload(monkeypatch, sample_png_bytes, sample_upload_name):
+    service = OBBGeoService(OBBGeoDetectionConfig(img_size=960, obj_thresh=0.25, nms_thresh=0.45))
+    service._loaded = True
+    service._model = _FakeModel()
+
+    monkeypatch.setattr(
+        "obb_geo_service.build_image_summary",
+        lambda filename: {
+            "image_name": filename,
+            "width": 1000,
+            "height": 1000,
+            "center_lon": 118.121057,
+            "center_lat": 24.536394,
+            "bounds": {},
+            "affine": [1.0, 0.0, 118.0, 0.0, -1.0, 24.0],
+        },
+    )
+    monkeypatch.setattr(
+        "obb_geo_service.extract_obb_detections",
+        lambda result, class_names: [
+            {
+                "index": 0,
+                "class_id": 0,
+                "class_name": "ship",
+                "confidence": 0.92,
+                "polygon": [[1.0, 2.0], [5.0, 2.0], [5.0, 6.0], [1.0, 6.0]],
+                "pixel_center": [3.0, 4.0],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "obb_geo_service.attach_geo_centers",
+        lambda filename, detections: [
+            {
+                **detections[0],
+                "geo_center": [118.123456, 24.534321],
+            }
+        ],
+    )
+
+    result = service.detect(
+        sample_png_bytes,
+        filename=sample_upload_name,
+        return_image=True,
+        return_boxes=True,
+        obj_thresh=0.3,
+        nms_thresh=0.4,
+    )
+
+    assert result["image"] == {
+        "file_name": sample_upload_name,
+        "width": 1000,
+        "height": 1000,
+        "center_geo": [118.121057, 24.536394],
+    }
+    assert result["detections"][0]["geo_center"] == [118.123456, 24.534321]
+    assert result["image_jpeg"][:2] == b"\xff\xd8"
+    assert result["perf"]["total_ms"] >= 0
+    assert service._model.calls == [
+        {"size": (16, 16), "imgsz": 960, "conf": 0.3, "iou": 0.4, "verbose": False}
+    ]
+
+
+def test_detect_rejects_invalid_image_bytes(sample_upload_name):
+    service = OBBGeoService(OBBGeoDetectionConfig())
+    service._loaded = True
+    service._model = _FakeModel()
+
+    with pytest.raises(OBBGeoDetectionError, match="Failed to decode image"):
+        service.detect(b"not-an-image", filename=sample_upload_name)
+
+
+def test_detect_returns_geo_not_found_when_filename_missing(monkeypatch, sample_png_bytes):
+    service = OBBGeoService(OBBGeoDetectionConfig())
+    service._loaded = True
+    service._model = _FakeModel()
+    monkeypatch.setattr("obb_geo_service.build_image_summary", lambda filename: (_ for _ in ()).throw(KeyError(filename)))
+
+    with pytest.raises(OBBGeoDetectionError) as exc_info:
+        service.detect(sample_png_bytes, filename="missing.jpg")
+
+    assert exc_info.value.code == "GEO_RECORD_NOT_FOUND"
+    assert exc_info.value.status_code == 404
+```
+
+- [ ] **Step 2: 运行测试，确认它失败**
+
+Run: `python -m pytest tests/test_obb_geo_service.py -q`
+Expected: FAIL，提示缺少 `obb_geo_service.py` 或缺少 `OBBGeoService`
+
+- [ ] **Step 3: 写最小实现**
+
+`obb_geo_service.py`
+
+```python
+from __future__ import annotations
+
+import io
+import os
+import threading
+import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
-ROOT_DIR = Path(__file__).resolve().parent
-SAMPLE_DIR = ROOT_DIR / "sample_100_mix"
-GEO_JSON_PATH = SAMPLE_DIR / "geo.json"
-MODEL_PATH = ROOT_DIR / "yolo26n_obb_fair1m.pt"
+from PIL import Image, UnidentifiedImageError
 
-
-@lru_cache(maxsize=1)
-def load_geo_payload() -> dict[str, Any]:
-    if not GEO_JSON_PATH.exists():
-        raise FileNotFoundError(f"Missing geo metadata file: {GEO_JSON_PATH}")
-    return json.loads(GEO_JSON_PATH.read_text(encoding="utf-8"))
+from demo.geo_mapper import attach_geo_centers, build_image_summary
+from demo.inference import extract_obb_detections, patch_torchvision_fake_registration
 
 
-@lru_cache(maxsize=1)
-def load_geo_index() -> dict[str, dict[str, Any]]:
-    payload = load_geo_payload()
-    return payload["images"]
+@dataclass
+class OBBGeoDetectionConfig:
+    model_path: str = os.getenv("MODEL_PATH", "yolo26n_obb_fair1m.pt")
+    img_size: int = int(os.getenv("IMG_SIZE", "1024"))
+    obj_thresh: float = float(os.getenv("OBJ_THRESH", "0.25"))
+    nms_thresh: float = float(os.getenv("NMS_THRESH", "0.45"))
+    request_timeout_sec: float = float(os.getenv("REQUEST_TIMEOUT_SEC", "8"))
+    max_image_bytes: int = int(os.getenv("MAX_IMAGE_BYTES", str(100 * 1024 * 1024)))
+    max_pixels: int = int(os.getenv("MAX_PIXELS", str(10000 * 10000)))
 
 
-def list_sample_images() -> list[str]:
-    images: list[str] = []
-    for image_key in sorted(load_geo_index()):
-        image_path = SAMPLE_DIR / f"{image_key}.jpg"
-        if image_path.exists():
-            images.append(image_path.name)
-    return images
+class OBBGeoDetectionError(Exception):
+    def __init__(self, code: str, message: str, status_code: int = 400, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
 
 
-def get_image_key(filename: str) -> str:
-    return Path(filename).stem
+class OBBGeoService:
+    def __init__(self, config: OBBGeoDetectionConfig):
+        self.config = config
+        self._lock = threading.Lock()
+        self._loaded = False
+        self._model = None
+
+    def load(self) -> None:
+        with self._lock:
+            if self._loaded:
+                return
+            model_path = Path(self.config.model_path)
+            if not model_path.exists():
+                raise OBBGeoDetectionError(
+                    "MODEL_NOT_FOUND",
+                    f"Model file not found: {model_path}",
+                    500,
+                    {"model_path": str(model_path)},
+                )
+            patch_torchvision_fake_registration()
+            from ultralytics import YOLO
+
+            self._model = YOLO(str(model_path))
+            self._loaded = True
+
+    def close(self) -> None:
+        with self._lock:
+            self._model = None
+            self._loaded = False
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "model_loaded": self._loaded,
+            "model_name": self.config.model_path,
+            "img_size": self.config.img_size,
+            "obj_thresh": self.config.obj_thresh,
+            "nms_thresh": self.config.nms_thresh,
+            "device": "cpu",
+        }
+
+    def _decode_image(self, image_bytes: bytes) -> Image.Image:
+        if not image_bytes:
+            raise OBBGeoDetectionError("INVALID_IMAGE", "Empty image body.", 400)
+        if len(image_bytes) > self.config.max_image_bytes:
+            raise OBBGeoDetectionError(
+                "IMAGE_TOO_LARGE",
+                "Image exceeds size limit.",
+                400,
+                {"max_image_bytes": self.config.max_image_bytes, "actual": len(image_bytes)},
+            )
+        try:
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        except UnidentifiedImageError as exc:
+            raise OBBGeoDetectionError("INVALID_IMAGE", "Failed to decode image.", 415) from exc
+        width, height = image.size
+        if width * height > self.config.max_pixels:
+            raise OBBGeoDetectionError(
+                "IMAGE_RESOLUTION_TOO_LARGE",
+                "Image resolution exceeds limit.",
+                400,
+                {"max_pixels": self.config.max_pixels, "actual_pixels": width * height},
+            )
+        return image
+
+    def detect(
+        self,
+        image_bytes: bytes,
+        *,
+        filename: str,
+        return_image: bool = True,
+        return_boxes: bool = True,
+        obj_thresh: Optional[float] = None,
+        nms_thresh: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        if not self._loaded or self._model is None:
+            raise OBBGeoDetectionError("MODEL_NOT_READY", "Model is not loaded.", 503)
+        if not filename:
+            raise OBBGeoDetectionError("INVALID_FILENAME", "Original filename is required.", 400)
+
+        effective_obj = self.config.obj_thresh if obj_thresh is None else obj_thresh
+        effective_nms = self.config.nms_thresh if nms_thresh is None else nms_thresh
+
+        begin_total = time.perf_counter()
+        begin_pre = time.perf_counter()
+        image = self._decode_image(image_bytes)
+        try:
+            summary = build_image_summary(filename)
+        except KeyError as exc:
+            raise OBBGeoDetectionError(
+                "GEO_RECORD_NOT_FOUND",
+                f"Geo record not found for image: {filename}",
+                404,
+                {"file_name": filename},
+            ) from exc
+        preprocess_ms = (time.perf_counter() - begin_pre) * 1000
+
+        with self._lock:
+            begin_infer = time.perf_counter()
+            results = self._model.predict(
+                source=image,
+                imgsz=self.config.img_size,
+                conf=effective_obj,
+                iou=effective_nms,
+                verbose=False,
+            )
+            infer_ms = (time.perf_counter() - begin_infer) * 1000
+
+        begin_post = time.perf_counter()
+        result = results[0]
+        raw_detections = extract_obb_detections(result, result.names or {}) if return_boxes else []
+        try:
+            detections = attach_geo_centers(filename, raw_detections) if return_boxes else []
+        except KeyError as exc:
+            raise OBBGeoDetectionError(
+                "GEO_MAPPING_INCOMPLETE",
+                f"Geo mapping data is incomplete for image: {filename}",
+                500,
+                {"file_name": filename},
+            ) from exc
+        plotted_image = Image.fromarray(result.plot()[:, :, ::-1]) if return_image else None
+        image_jpeg = None
+        if plotted_image is not None:
+            buffer = io.BytesIO()
+            plotted_image.convert("RGB").save(buffer, format="JPEG")
+            image_jpeg = buffer.getvalue()
+        postprocess_ms = (time.perf_counter() - begin_post) * 1000
+        total_ms = (time.perf_counter() - begin_total) * 1000
+
+        return {
+            "request_id": str(uuid.uuid4()),
+            "image": {
+                "file_name": filename,
+                "width": summary["width"],
+                "height": summary["height"],
+                "center_geo": [summary["center_lon"], summary["center_lat"]],
+            },
+            "detections": detections,
+            "perf": {
+                "preprocess_ms": round(preprocess_ms, 3),
+                "infer_ms": round(infer_ms, 3),
+                "postprocess_ms": round(postprocess_ms, 3),
+                "total_ms": round(total_ms, 3),
+            },
+            "image_jpeg": image_jpeg,
+        }
+```
+
+- [ ] **Step 4: 运行测试，确认它通过**
+
+Run: `python -m pytest tests/test_obb_geo_service.py -q`
+Expected: PASS
+
+- [ ] **Step 5: 提交本任务改动**
+
+```bash
+git add obb_geo_service.py tests/test_obb_geo_service.py
+git commit -m "feat: add obb geo detection service"
+```
+
+### Task 3: 实现同步 API、配置接口与主检测接口
+
+**Files:**
+- Create: `obb_geo_api_server.py`
+- Create: `tests/test_obb_geo_api_sync.py`
+
+- [ ] **Step 1: 写同步接口失败测试**
+
+`tests/test_obb_geo_api_sync.py`
+
+```python
+from __future__ import annotations
+
+import base64
+
+from fastapi.testclient import TestClient
+
+import obb_geo_api_server as api
 
 
-def get_image_path(filename: str) -> Path:
-    image_path = SAMPLE_DIR / filename
-    if not image_path.exists():
-        raise FileNotFoundError(f"Missing sample image: {image_path}")
-    return image_path
+class _FakeService:
+    def __init__(self):
+        self.config = api.config
+        self.detect_calls = []
+
+    def load(self):
+        return None
+
+    def close(self):
+        return None
+
+    def status(self):
+        return {
+            "model_loaded": True,
+            "model_name": "yolo26n_obb_fair1m.pt",
+            "img_size": 1024,
+            "obj_thresh": 0.25,
+            "nms_thresh": 0.45,
+            "device": "cpu",
+        }
+
+    def detect(self, image_bytes, *, filename, return_image, return_boxes, obj_thresh, nms_thresh):
+        self.detect_calls.append(
+            {
+                "filename": filename,
+                "return_image": return_image,
+                "return_boxes": return_boxes,
+                "obj_thresh": obj_thresh,
+                "nms_thresh": nms_thresh,
+            }
+        )
+        return {
+            "request_id": "req-1",
+            "image": {
+                "file_name": filename,
+                "width": 1000,
+                "height": 1000,
+                "center_geo": [118.121057, 24.536394],
+            },
+            "detections": [
+                {
+                    "index": 0,
+                    "class_id": 1,
+                    "class_name": "plane",
+                    "confidence": 0.91,
+                    "pixel_center": [100.0, 200.0],
+                    "geo_center": [118.12, 24.53],
+                }
+            ],
+            "perf": {"total_ms": 12.3},
+            "image_jpeg": b"\xff\xd8fake-jpeg",
+        }
 
 
-def get_image_geo_record(filename: str) -> dict[str, Any]:
-    image_key = get_image_key(filename)
-    geo_index = load_geo_index()
-    if image_key not in geo_index:
-        raise KeyError(f"Missing geo record for image: {filename}")
-    return geo_index[image_key]
+def test_health_and_model_status(monkeypatch):
+    monkeypatch.setattr(api, "service", _FakeService())
+    with TestClient(api.app) as client:
+        health = client.get("/v1/health")
+        status = client.get("/v1/model/status")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert status.status_code == 200
+    assert status.json()["model_loaded"] is True
+
+
+def test_detect_base64_returns_json(monkeypatch, sample_png_bytes, sample_upload_name):
+    fake_service = _FakeService()
+    monkeypatch.setattr(api, "service", fake_service)
+    with TestClient(api.app) as client:
+        response = client.post(
+            "/v1/detect",
+            files={"image": (sample_upload_name, sample_png_bytes, "image/png")},
+            data={"image_mode": "base64", "return_image": "true", "return_boxes": "true"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request_id"] == "req-1"
+    assert payload["image"]["center_geo"] == [118.121057, 24.536394]
+    assert payload["detections"][0]["geo_center"] == [118.12, 24.53]
+    assert payload["image_result"]["mode"] == "base64"
+    assert base64.b64decode(payload["image_result"]["value"]).startswith(b"\xff\xd8")
+    assert fake_service.detect_calls[0]["filename"] == sample_upload_name
+
+
+def test_detect_binary_returns_jpeg_response(monkeypatch, sample_png_bytes, sample_upload_name):
+    monkeypatch.setattr(api, "service", _FakeService())
+    with TestClient(api.app) as client:
+        response = client.post(
+            "/v1/detect",
+            files={"image": (sample_upload_name, sample_png_bytes, "image/png")},
+            data={"image_mode": "binary", "return_image": "true"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["x-request-id"] == "req-1"
+    assert response.content.startswith(b"\xff\xd8")
+
+
+def test_patch_config_updates_thresholds(monkeypatch):
+    monkeypatch.setattr(api, "service", _FakeService())
+    with TestClient(api.app) as client:
+        response = client.patch("/v1/config", json={"obj_thresh": 0.5, "nms_thresh": 0.3})
+
+    assert response.status_code == 200
+    assert response.json()["config"]["obj_thresh"] == 0.5
+    assert response.json()["config"]["nms_thresh"] == 0.3
+```
+
+- [ ] **Step 2: 运行测试，确认它失败**
+
+Run: `python -m pytest tests/test_obb_geo_api_sync.py -q`
+Expected: FAIL，提示缺少 `obb_geo_api_server.py` 或缺少 `/v1/detect`
+
+- [ ] **Step 3: 写最小实现**
+
+`obb_geo_api_server.py`
+
+```python
+from __future__ import annotations
+
+import base64
+import os
+import time
+from typing import Any, Dict, Optional
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import JSONResponse, Response
+
+from obb_geo_service import OBBGeoDetectionConfig, OBBGeoDetectionError, OBBGeoService
+
+
+APP_VERSION = "1.0.0"
+START_TS = time.time()
+API_KEY = os.getenv("API_KEY", "")
+DEFAULT_RETURN_IMAGE_MODE = os.getenv("RETURN_IMAGE_MODE", "binary")
+
+app = FastAPI(title="YOLO OBB Geo API", version=APP_VERSION)
+config = OBBGeoDetectionConfig()
+service = OBBGeoService(config)
+
+
+def _config_dict() -> Dict[str, Any]:
+    return {
+        "model_path": config.model_path,
+        "img_size": config.img_size,
+        "obj_thresh": config.obj_thresh,
+        "nms_thresh": config.nms_thresh,
+        "request_timeout_sec": config.request_timeout_sec,
+        "max_image_bytes": config.max_image_bytes,
+        "max_pixels": config.max_pixels,
+    }
+
+
+def _check_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "Invalid API key."})
+
+
+def _build_error(err: OBBGeoDetectionError, request_id: str) -> Dict[str, Any]:
+    return {
+        "code": err.code,
+        "message": err.message,
+        "request_id": request_id,
+        "details": err.details,
+    }
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    service.load()
+
+
+@app.on_event("shutdown")
+def shutdown_event() -> None:
+    service.close()
+
+
+@app.get("/v1/health")
+def health(_: None = Depends(_check_api_key)) -> Dict[str, Any]:
+    return {"status": "ok", "version": APP_VERSION, "uptime_sec": int(time.time() - START_TS)}
+
+
+@app.get("/v1/model/status")
+def model_status(_: None = Depends(_check_api_key)) -> Dict[str, Any]:
+    return service.status()
+
+
+@app.get("/v1/config")
+def get_config(_: None = Depends(_check_api_key)) -> Dict[str, Any]:
+    return _config_dict()
+
+
+@app.patch("/v1/config")
+def patch_config(payload: Dict[str, Any], _: None = Depends(_check_api_key)) -> Dict[str, Any]:
+    for key in ("obj_thresh", "nms_thresh", "img_size", "request_timeout_sec", "max_image_bytes", "max_pixels"):
+        if key in payload and payload[key] is not None:
+            setattr(config, key, payload[key])
+    return {"updated": True, "config": _config_dict()}
+
+
+@app.post("/v1/detect")
+async def detect(
+    image: UploadFile = File(...),
+    return_image: bool = Form(True),
+    return_boxes: bool = Form(True),
+    image_mode: str = Form(DEFAULT_RETURN_IMAGE_MODE),
+    obj_thresh: Optional[float] = Form(default=None),
+    nms_thresh: Optional[float] = Form(default=None),
+    _: None = Depends(_check_api_key),
+):
+    request_id = f"req-{int(time.time() * 1000)}"
+    try:
+        if image_mode not in {"binary", "base64", "none"}:
+            raise OBBGeoDetectionError("INVALID_IMAGE_MODE", "image_mode must be one of binary/base64/none.", 400)
+        if image.content_type not in {"image/jpeg", "image/png", "image/jpg"}:
+            raise OBBGeoDetectionError("UNSUPPORTED_MEDIA_TYPE", "Only jpg/png are supported.", 415)
+        if obj_thresh is not None and not (0 <= obj_thresh <= 1):
+            raise OBBGeoDetectionError("INVALID_OBJ_THRESH", "obj_thresh must be between 0 and 1.", 400)
+        if nms_thresh is not None and not (0 <= nms_thresh <= 1):
+            raise OBBGeoDetectionError("INVALID_NMS_THRESH", "nms_thresh must be between 0 and 1.", 400)
+
+        image_bytes = await image.read()
+        result = service.detect(
+            image_bytes,
+            filename=image.filename or "",
+            return_image=return_image,
+            return_boxes=return_boxes,
+            obj_thresh=obj_thresh,
+            nms_thresh=nms_thresh,
+        )
+        request_id = result["request_id"]
+        image_jpeg = result.pop("image_jpeg", None)
+
+        if return_image and image_mode == "binary":
+            headers = {
+                "X-Request-ID": request_id,
+                "X-Detections-Count": str(len(result.get("detections", []))),
+                "X-Perf-Total-Ms": str(result["perf"]["total_ms"]),
+            }
+            return Response(content=image_jpeg or b"", media_type="image/jpeg", headers=headers)
+
+        payload = {
+            "request_id": request_id,
+            "image": result["image"],
+            "detections": result.get("detections", []),
+            "perf": result.get("perf", {}),
+            "image_result": {"mode": "none", "value": None},
+        }
+        if return_image and image_mode == "base64":
+            payload["image_result"] = {
+                "mode": "base64",
+                "value": base64.b64encode(image_jpeg or b"").decode("ascii"),
+            }
+        return JSONResponse(payload)
+    except OBBGeoDetectionError as err:
+        raise HTTPException(status_code=err.status_code, detail=_build_error(err, request_id))
+```
+
+- [ ] **Step 4: 运行测试，确认它通过**
+
+Run: `python -m pytest tests/test_obb_geo_api_sync.py -q`
+Expected: PASS
+
+- [ ] **Step 5: 提交本任务改动**
+
+```bash
+git add obb_geo_api_server.py tests/test_obb_geo_api_sync.py
+git commit -m "feat: add sync obb geo api endpoints"
+```
+
+### Task 4: 扩展异步任务接口与 metrics
+
+**Files:**
+- Modify: `obb_geo_api_server.py`
+- Create: `tests/test_obb_geo_api_async.py`
+
+- [ ] **Step 1: 写异步接口失败测试**
+
+`tests/test_obb_geo_api_async.py`
+
+```python
+from __future__ import annotations
+
+from concurrent.futures import Future
+
+from fastapi.testclient import TestClient
+
+import obb_geo_api_server as api
+
+
+class _FakeService:
+    def __init__(self):
+        self.config = api.config
+
+    def load(self):
+        return None
+
+    def close(self):
+        return None
+
+    def status(self):
+        return {"model_loaded": True}
+
+    def detect(self, image_bytes, *, filename, return_image, return_boxes, obj_thresh, nms_thresh):
+        return {
+            "request_id": "job-request",
+            "image": {
+                "file_name": filename,
+                "width": 1000,
+                "height": 1000,
+                "center_geo": [118.121057, 24.536394],
+            },
+            "detections": [
+                {
+                    "index": 0,
+                    "class_id": 1,
+                    "class_name": "plane",
+                    "confidence": 0.91,
+                    "pixel_center": [100.0, 200.0],
+                    "geo_center": [118.12, 24.53],
+                }
+            ],
+            "perf": {"total_ms": 12.3},
+            "image_jpeg": b"\xff\xd8fake-jpeg",
+        }
+
+
+def test_async_job_lifecycle(monkeypatch, sample_png_bytes, sample_upload_name):
+    monkeypatch.setattr(api, "service", _FakeService())
+
+    future = Future()
+    future.set_result(api.service.detect(sample_png_bytes, filename=sample_upload_name, return_image=True, return_boxes=True, obj_thresh=None, nms_thresh=None))
+    monkeypatch.setattr(api.executor, "submit", lambda fn, *args, **kwargs: future)
+    api.jobs.clear()
+
+    with TestClient(api.app) as client:
+        created = client.post(
+            "/v1/detect/jobs",
+            files={"image": (sample_upload_name, sample_png_bytes, "image/png")},
+        )
+        job_id = created.json()["job_id"]
+        queried = client.get(f"/v1/detect/jobs/{job_id}")
+        image_resp = client.get(f"/v1/detect/jobs/{job_id}/image")
+        deleted = client.delete(f"/v1/detect/jobs/{job_id}")
+
+    assert created.status_code == 200
+    assert queried.status_code == 200
+    assert queried.json()["status"] == "succeeded"
+    assert queried.json()["result"]["image"]["center_geo"] == [118.121057, 24.536394]
+    assert image_resp.status_code == 200
+    assert image_resp.content.startswith(b"\xff\xd8")
+    assert deleted.json() == {"deleted": True, "job_id": job_id}
+
+
+def test_metrics_endpoint_returns_prometheus_lines(monkeypatch):
+    monkeypatch.setattr(api, "service", _FakeService())
+    api.metrics["requests_total"] = 3
+    with TestClient(api.app) as client:
+        response = client.get("/v1/metrics")
+
+    assert response.status_code == 200
+    assert "obb_geo_api_requests_total 3" in response.text
+```
+
+- [ ] **Step 2: 运行测试，确认它失败**
+
+Run: `python -m pytest tests/test_obb_geo_api_async.py -q`
+Expected: FAIL，提示缺少 `/v1/detect/jobs`、`/v1/metrics` 或模块内没有 `jobs` / `metrics`
+
+- [ ] **Step 3: 在现有 API 文件上做最小增量实现**
+
+在 `obb_geo_api_server.py` 顶部补充这些导入和全局变量：
+
+```python
+import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Lock
+
+
+ASYNC_WORKERS = int(os.getenv("ASYNC_WORKERS", "1"))
+
+executor = ThreadPoolExecutor(max_workers=max(1, ASYNC_WORKERS))
+job_lock = Lock()
+jobs: Dict[str, Dict[str, Any]] = {}
+
+metrics_lock = Lock()
+metrics = {
+    "requests_total": 0,
+    "requests_success_total": 0,
+    "requests_failed_total": 0,
+    "detect_sync_total": 0,
+    "detect_async_total": 0,
+}
+
+
+def _inc(metric_key: str) -> None:
+    with metrics_lock:
+        metrics[metric_key] = metrics.get(metric_key, 0) + 1
+
+
+def _save_job(job_id: str, data: Dict[str, Any]) -> None:
+    with job_lock:
+        jobs[job_id] = data
+
+
+def _get_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with job_lock:
+        return jobs.get(job_id)
+```
+
+把 `shutdown_event()` 改成：
+
+```python
+@app.on_event("shutdown")
+def shutdown_event() -> None:
+    service.close()
+    executor.shutdown(wait=False, cancel_futures=True)
+```
+
+把 `detect()` 的开头与成功/失败分支补上 metrics：
+
+```python
+    _inc("requests_total")
+    _inc("detect_sync_total")
+```
+
+在 `image_jpeg = result.pop("image_jpeg", None)` 后补上：
+
+```python
+        _inc("requests_success_total")
+```
+
+在 `except OBBGeoDetectionError as err:` 前后补上：
+
+```python
+    except OBBGeoDetectionError as err:
+        _inc("requests_failed_total")
+        raise HTTPException(status_code=err.status_code, detail=_build_error(err, request_id))
+    except Exception as err:
+        _inc("requests_failed_total")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_ERROR", "message": str(err), "request_id": request_id, "details": {}},
+        )
+```
+
+在文件末尾追加这些路由：
+
+```python
+@app.post("/v1/detect/jobs")
+async def create_detect_job(
+    image: UploadFile = File(...),
+    return_image: bool = Form(True),
+    return_boxes: bool = Form(True),
+    obj_thresh: Optional[float] = Form(default=None),
+    nms_thresh: Optional[float] = Form(default=None),
+    _: None = Depends(_check_api_key),
+) -> Dict[str, Any]:
+    _inc("requests_total")
+    _inc("detect_async_total")
+    if image.content_type not in {"image/jpeg", "image/png", "image/jpg"}:
+        raise HTTPException(status_code=415, detail={"code": "UNSUPPORTED_MEDIA_TYPE", "message": "Only jpg/png are supported."})
+    job_id = str(uuid.uuid4())
+    image_bytes = await image.read()
+    future = executor.submit(
+        service.detect,
+        image_bytes,
+        filename=image.filename or "",
+        return_image=return_image,
+        return_boxes=return_boxes,
+        obj_thresh=obj_thresh,
+        nms_thresh=nms_thresh,
+    )
+    _save_job(job_id, {"status": "queued", "future": future})
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/v1/detect/jobs/{job_id}")
+def get_detect_job(job_id: str, _: None = Depends(_check_api_key)) -> Dict[str, Any]:
+    item = _get_job(job_id)
+    if not item:
+        raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": "Job not found."})
+    future: Future = item["future"]
+    if not future.done():
+        return {"job_id": job_id, "status": item.get("status", "queued")}
+    result = future.result()
+    item["status"] = "succeeded"
+    item["result"] = result
+    return {
+        "job_id": job_id,
+        "status": "succeeded",
+        "result": {
+            "request_id": result["request_id"],
+            "image": result["image"],
+            "detections": result["detections"],
+            "perf": result["perf"],
+        },
+    }
+
+
+@app.get("/v1/detect/jobs/{job_id}/image")
+def get_detect_job_image(job_id: str, _: None = Depends(_check_api_key)) -> Response:
+    item = _get_job(job_id)
+    if not item:
+        raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": "Job not found."})
+    if "result" not in item:
+        raise HTTPException(status_code=409, detail={"code": "JOB_NOT_READY", "message": "Job result not ready."})
+    return Response(content=item["result"].get("image_jpeg") or b"", media_type="image/jpeg")
+
+
+@app.delete("/v1/detect/jobs/{job_id}")
+def delete_detect_job(job_id: str, _: None = Depends(_check_api_key)) -> Dict[str, Any]:
+    with job_lock:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": "Job not found."})
+        jobs.pop(job_id, None)
+    return {"deleted": True, "job_id": job_id}
+
+
+@app.get("/v1/metrics")
+def get_metrics(_: None = Depends(_check_api_key)) -> Response:
+    rows = []
+    with metrics_lock:
+        for key, value in metrics.items():
+            rows.append(f"obb_geo_api_{key} {value}")
+    rows.append(f"obb_geo_api_uptime_seconds {int(time.time() - START_TS)}")
+    return Response(content="\n".join(rows) + "\n", media_type="text/plain; version=0.0.4")
+```
+
+- [ ] **Step 4: 运行测试，确认它通过**
+
+Run: `python -m pytest tests/test_obb_geo_api_async.py -q`
+Expected: PASS
+
+- [ ] **Step 5: 提交本任务改动**
+
+```bash
+git add obb_geo_api_server.py tests/test_obb_geo_api_async.py
+git commit -m "feat: add async obb geo api endpoints"
+```
+
+### Task 5: 编写 API 使用文档并做完整验证
+
+**Files:**
+- Create: `README.md`
+- Create: `tests/test_readme_api_usage.py`
+
+- [ ] **Step 1: 写文档失败测试**
+
+`tests/test_readme_api_usage.py`
+
+```python
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_readme_describes_api_usage():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "uvicorn obb_geo_api_server:app" in readme
+    assert "/v1/detect" in readme
+    assert "sample_100_mix" in readme
+    assert "image_mode" in readme
+```
+
+- [ ] **Step 2: 运行测试，确认它失败**
+
+Run: `python -m pytest tests/test_readme_api_usage.py -q`
+Expected: FAIL，提示缺少 `README.md` 或内容不包含 API 用法
+
+- [ ] **Step 3: 写最小实现**
+
+`README.md`
+
+```markdown
+# YOLO OBB Geo API Service
+
+基于 `yolo26n_obb_fair1m.pt` 和 `sample_100_mix/geo.json` 的 OBB 地理检测 API 服务。
+
+## 安装依赖
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+## 启动服务
+
+```bash
+uvicorn obb_geo_api_server:app --host 0.0.0.0 --port 8001
+```
+
+启动后访问 `http://127.0.0.1:8001/docs` 查看 Swagger 文档。
+
+## 检测接口
+
+```bash
+curl -X POST "http://127.0.0.1:8001/v1/detect" \
+  -F "image=@sample_100_mix/train__t_10144.jpg" \
+  -F "image_mode=base64" \
+  -F "return_image=true"
+```
+
+## 业务约束
+
+- 上传文件必须来自 `sample_100_mix`
+- 服务保留上传文件原始文件名
+- 通过原始文件名匹配 `geo.json`
+- 成功结果返回图片中心经纬度和检测框中心经纬度
+
+## 图片返回模式
+
+- `image_mode=binary`
+- `image_mode=base64`
+- `image_mode=none`
+```
+
+- [ ] **Step 4: 跑文档测试和完整测试集**
+
+Run: `python -m pytest tests/test_api_project_files.py tests/test_obb_geo_service.py tests/test_obb_geo_api_sync.py tests/test_obb_geo_api_async.py tests/test_readme_api_usage.py -q`
+Expected: PASS
+
+- [ ] **Step 5: 提交本任务改动**
+
+```bash
+git add README.md tests/test_readme_api_usage.py
+git commit -m "docs: add obb geo api usage guide"
+```
+
+## Self-Review Checklist
+
+- Spec coverage: 已覆盖依赖、服务层、同步接口、异步接口、配置、metrics、README 和验证命令
+- Placeholder scan: 无 `TBD`、`TODO`、`implement later` 等占位语句
+- Type consistency: `OBBGeoDetectionConfig`、`OBBGeoDetectionError`、`OBBGeoService.detect()`、`image_result`、`center_geo`、`geo_center` 等命名在各任务中保持一致
 
 
 def get_model_path() -> Path:

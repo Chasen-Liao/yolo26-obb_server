@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from data_loader import get_image_geo_record
+try:
+    from .data_loader import get_image_geo_record
+except ImportError:
+    from data_loader import get_image_geo_record
 
 
 def pixel_to_geo(affine: list[float], x: float, y: float) -> tuple[float, float]:

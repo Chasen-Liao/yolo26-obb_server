@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any
 import torch
 from PIL import Image
 
-from data_loader import get_model_path
+try:
+    from .data_loader import get_model_path
+except ImportError:
+    from data_loader import get_model_path
 
 if TYPE_CHECKING:
     from ultralytics import YOLO

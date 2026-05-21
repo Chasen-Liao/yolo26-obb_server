@@ -5,7 +5,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parent
+DEMO_DIR = Path(__file__).resolve().parent
+ROOT_DIR = DEMO_DIR.parent
 SAMPLE_DIR = ROOT_DIR / "sample_100_mix"
 GEO_JSON_PATH = SAMPLE_DIR / "geo.json"
 MODEL_PATH = ROOT_DIR / "yolo26n_obb_fair1m.pt"

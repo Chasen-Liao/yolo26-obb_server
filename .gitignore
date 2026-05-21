@@ -2,3 +2,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 .gradio/
+uv.lock
+
+# 环境变量（含敏感信息，不提交）
+.env

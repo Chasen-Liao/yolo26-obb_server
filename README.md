@@ -1,59 +1,112 @@
-# YOLO OBB 样例图地理检测 Demo
+# YOLO OBB Geo API
 
-这是一个基于 `sample_100_mix/` 样例图与 `yolo26n_obb_fair1m.pt` 权重的轻量 `Streamlit` demo。
+基于 YOLOv8-OBB 旋转目标检测 + 地理坐标映射的 API 服务，同时提供交互式 Demo 界面。
 
-## 效果图
+**核心能力**：上传航拍/卫星图像，检测任意方向的旋转目标（飞机、船舶等），并直接将检测框中心点映射为经纬度坐标。
 
-![图](image.png)
+---
 
-## 功能
+## 快速体验
 
-- 从 `sample_100_mix/` 中选择样例图
-- 在选择区右侧实时预览当前选中图片缩略图
-- 使用 OBB 模型执行单图检测
-- 展示带检测框的结果图
-- 展示图片中心点经纬度
-- 展示最多 5 个检测框结果
-- 每个检测框展示类别、置信度、像素中心点、经纬度中心点
-
-## 项目结构
-
-- `app.py`：`Streamlit` 页面入口
-- `data_loader.py`：样例图与 `geo.json` 元数据读取
-- `geo_mapper.py`：像素坐标到经纬度映射
-- `inference.py`：YOLO OBB 推理与检测结果整理
-- `sample_100_mix/`：样例图片与地理信息
-
-## 环境准备
+### Demo 界面（适合快速目视验证）
 
 ```bash
-python -m pip install -r requirements.txt
+streamlit run demo/app.py --server.address 0.0.0.0
 ```
 
-## 运行方式
+访问 `http://<host>:8501`，选择样例图即可查看检测结果与地理信息。
+
+详细说明 → [`demo/README.md`](./demo/README.md)
+
+### API 服务（适合程序调用或集成）
 
 ```bash
-streamlit run app.py --server.address 0.0.0.0
+uv sync
+uv run uvicorn obb_geo_api_server:app --host 0.0.0.0 --port 8003 --reload
 ```
 
-启动后可在浏览器中打开 `Streamlit` 输出的地址。
+启动后访问 `http://<host>:8003/docs`（Swagger UI）或 `/redoc`（ReDoc）。
 
-## 使用说明
+详细接口文档 → [`README_API.md`](./README_API.md)
 
-1. 在“样例图片”下拉框中选择一张图
-2. 右侧预览区确认当前选中图片
-3. 点击“开始检测”
-4. 查看检测结果图、图片中心点经纬度与检测框详情
+---
 
-## 当前限制
+## 目录结构
 
-- 仅支持 `sample_100_mix/` 目录中的样例图
-- 不支持上传自定义图片
-- 不返回检测框四角点经纬度
-- 当前推理环境依赖本机已安装的 `torch`、`torchvision` 与 `ultralytics`
+```
+├── obb_geo_api_server.py   # FastAPI 服务入口
+├── obb_geo_service.py      # 核心检测/地理映射逻辑
+├── main.py                  # 命令行入口
+├── pyproject.toml           # 依赖管理
+├── .env.example             # 环境变量模板
+│
+├── demo/                    # 交互式 Demo（Streamlit）
+│   ├── app.py
+│   ├── data_loader.py
+│   ├── geo_mapper.py
+│   ├── inference.py
+│   └── tests/
+│
+├── tests/                   # 单元测试
+│
+├── sample_100_mix/          # 样例数据（图片 + geo.json）
+│
+└── docs/superpowers/        # 设计文档与计划
+```
+
+---
+
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 检测模型 | YOLOv8-OBB（`ultralytics`） |
+| API 框架 | FastAPI + Uvicorn |
+| Demo 界面 | Streamlit |
+| 地理映射 | 仿射变换（基于 `geo.json` 元数据） |
+| 环境管理 | `uv` |
+
+---
+
+## 配置
+
+复制模板并按需修改：
+
+```bash
+cp .env.example .env
+```
+
+主要环境变量：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `MODEL_PATH` | 模型权重路径 | `yolo26n_obb_fair1m.pt` |
+| `IMG_SIZE` | 推理图像尺寸 | `1024` |
+| `OBJ_THRESH` | 目标置信度阈值 | `0.25` |
+| `NMS_THRESH` | NMS 阈值 | `0.45` |
+| `API_KEY` | 鉴权密钥（空=不鉴权） | 空 |
+
+---
 
 ## 测试
 
 ```bash
-python -m pytest tests/test_project_files.py tests/test_data_loader.py tests/test_geo_mapper.py tests/test_inference.py tests/test_app.py -q
+uv run pytest tests/ -q
 ```
+
+---
+
+## API 一览
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/v1/health` | 健康检查 |
+| GET | `/v1/model/status` | 模型状态 |
+| GET | `/v1/config` | 获取配置 |
+| PATCH | `/v1/config` | 更新配置 |
+| POST | `/v1/detect` | 同步检测 |
+| POST | `/v1/detect/jobs` | 创建异步任务 |
+| GET | `/v1/detect/jobs/{job_id}` | 查询异步任务 |
+| GET | `/v1/detect/jobs/{job_id}/image` | 获取结果图片 |
+| DELETE | `/v1/detect/jobs/{job_id}` | 删除任务 |
+| GET | `/v1/metrics` | Prometheus 监控指标 |
