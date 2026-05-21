@@ -119,3 +119,48 @@ def test_detect_rejects_unknown_geo_filename(monkeypatch, sample_png_bytes):
 
     assert exc_info.value.code == "GEO_RECORD_NOT_FOUND"
     assert exc_info.value.status_code == 404
+
+
+def test_detect_geo_none_skips_geo_lookup(monkeypatch, sample_png_bytes):
+    service = OBBGeoService(OBBGeoDetectionConfig())
+    service._loaded = True
+    service._model = _FakeModel()
+    monkeypatch.setattr("obb_geo_service.build_image_summary", lambda filename: (_ for _ in ()).throw(KeyError(filename)))
+    monkeypatch.setattr(
+        "obb_geo_service.extract_obb_detections",
+        lambda result, class_names: [
+            {
+                "index": 0,
+                "class_id": 0,
+                "class_name": "ship",
+                "confidence": 0.92,
+                "polygon": [[1.0, 2.0], [5.0, 2.0], [5.0, 6.0], [1.0, 6.0]],
+                "pixel_center": [3.0, 4.0],
+            }
+        ],
+    )
+
+    result = service.detect(sample_png_bytes, filename="renamed.jpg", geo_mode="none")
+
+    assert result["image"] == {"file_name": "renamed.jpg", "width": 16, "height": 16, "center_geo": None}
+    assert result["detections"][0]["pixel_center"] == [3.0, 4.0]
+    assert "geo_center" not in result["detections"][0]
+
+
+def test_detect_geo_auto_falls_back_without_geo(monkeypatch, sample_png_bytes):
+    service = OBBGeoService(OBBGeoDetectionConfig())
+    service._loaded = True
+    service._model = _FakeModel()
+    monkeypatch.setattr("obb_geo_service.build_image_summary", lambda filename: (_ for _ in ()).throw(KeyError(filename)))
+    monkeypatch.setattr(
+        "obb_geo_service.extract_obb_detections",
+        lambda result, class_names: [
+            {"index": 0, "class_id": 0, "class_name": "ship", "confidence": 0.92, "pixel_center": [3.0, 4.0]}
+        ],
+    )
+
+    result = service.detect(sample_png_bytes, filename="renamed.jpg", geo_mode="auto")
+
+    assert result["image"]["center_geo"] is None
+    assert result["geo_status"] == "not_found"
+    assert "geo_center" not in result["detections"][0]

@@ -14,7 +14,7 @@ class _StubService:
     def load(self):
         pass
 
-    def detect(self, image_bytes, filename, return_image, return_boxes, obj_thresh, nms_thresh):
+    def detect(self, image_bytes, filename, return_image, return_boxes, obj_thresh, nms_thresh, geo_mode="required"):
         self.calls.append(
             {
                 "filename": filename,
@@ -22,6 +22,7 @@ class _StubService:
                 "return_boxes": return_boxes,
                 "obj_thresh": obj_thresh,
                 "nms_thresh": nms_thresh,
+                "geo_mode": geo_mode,
             }
         )
         return {
@@ -69,8 +70,36 @@ def test_detect_returns_json_payload_for_none_mode(monkeypatch, sample_png_bytes
             "return_boxes": True,
             "obj_thresh": None,
             "nms_thresh": None,
+            "geo_mode": "required",
         }
     ]
+
+
+def test_detect_passes_geo_mode(monkeypatch, sample_png_bytes, sample_upload_name):
+    stub = _StubService()
+    monkeypatch.setattr("obb_geo_api_server.service", stub)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/detect",
+        files={"image": (sample_upload_name, sample_png_bytes, "image/png")},
+        data={"geo_mode": "none"},
+    )
+
+    assert response.status_code == 200
+    assert stub.calls[0]["geo_mode"] == "none"
+
+
+def test_detect_rejects_unknown_geo_mode(sample_png_bytes, sample_upload_name):
+    client = TestClient(app)
+    response = client.post(
+        "/v1/detect",
+        files={"image": (sample_upload_name, sample_png_bytes, "image/png")},
+        data={"geo_mode": "bad-mode"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "INVALID_GEO_MODE"
 
 
 def test_detect_returns_base64_image(monkeypatch, sample_png_bytes, sample_upload_name):

@@ -80,11 +80,14 @@ class OBBGeoService:
         return_boxes: bool = True,
         obj_thresh: float | None = None,
         nms_thresh: float | None = None,
+        geo_mode: str = "required",
     ) -> dict[str, Any]:
         if not filename:
             raise OBBGeoDetectionError("INVALID_FILENAME", "Original filename is required.", 400)
         if len(image_bytes) > self.config.max_image_bytes:
             raise OBBGeoDetectionError("IMAGE_TOO_LARGE", "Image bytes exceed max_image_bytes.", 400)
+        if geo_mode not in {"required", "auto", "none"}:
+            raise OBBGeoDetectionError("INVALID_GEO_MODE", "geo_mode must be one of required/auto/none.", 400)
 
         self.load()
 
@@ -97,22 +100,27 @@ class OBBGeoService:
         if image.width * image.height > self.config.max_pixels:
             raise OBBGeoDetectionError("IMAGE_TOO_LARGE", "Image pixels exceed max_pixels.", 400)
 
-        try:
-            summary = build_image_summary(filename)
-        except KeyError as exc:
-            raise OBBGeoDetectionError(
-                "GEO_RECORD_NOT_FOUND",
-                f"Geo record not found for filename: {filename}",
-                404,
-                {"filename": filename},
-            ) from exc
+        summary = None
+        geo_status = "disabled" if geo_mode == "none" else "ok"
+        if geo_mode != "none":
+            try:
+                summary = build_image_summary(filename)
+            except KeyError as exc:
+                if geo_mode == "required":
+                    raise OBBGeoDetectionError(
+                        "GEO_RECORD_NOT_FOUND",
+                        f"Geo record not found for filename: {filename}",
+                        404,
+                        {"filename": filename},
+                    ) from exc
+                geo_status = "not_found"
 
         conf = self.config.obj_thresh if obj_thresh is None else obj_thresh
         iou = self.config.nms_thresh if nms_thresh is None else nms_thresh
         results = self._model.predict(source=image, imgsz=self.config.img_size, conf=conf, iou=iou, verbose=False)
         result = results[0]
         detections = extract_obb_detections(result, self._model.names)
-        detections = attach_geo_centers(filename, detections) if return_boxes else []
+        detections = attach_geo_centers(filename, detections) if return_boxes and summary is not None else ([] if not return_boxes else detections)
 
         plotted_bytes = None
         if return_image:
@@ -122,14 +130,16 @@ class OBBGeoService:
             plotted_bytes = buffer.getvalue()
 
         elapsed_ms = round((time.perf_counter() - started_at) * 1000, 3)
+        image_info = {
+            "file_name": filename,
+            "width": summary["width"] if summary is not None else image.width,
+            "height": summary["height"] if summary is not None else image.height,
+            "center_geo": [summary["center_lon"], summary["center_lat"]] if summary is not None else None,
+        }
         return {
-            "image": {
-                "file_name": filename,
-                "width": summary["width"],
-                "height": summary["height"],
-                "center_geo": [summary["center_lon"], summary["center_lat"]],
-            },
+            "image": image_info,
             "detections": detections,
             "perf": {"total_ms": elapsed_ms},
             "image_jpeg": plotted_bytes,
+            "geo_status": geo_status,
         }

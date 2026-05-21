@@ -131,6 +131,7 @@ async def detect(
     image_mode: str = Form(DEFAULT_RETURN_IMAGE_MODE),
     obj_thresh: float | None = Form(default=None),
     nms_thresh: float | None = Form(default=None),
+    geo_mode: str = Form("required"),
     _: None = Depends(_check_api_key),
 ):
     _inc("requests_total")
@@ -139,6 +140,8 @@ async def detect(
     try:
         if image_mode not in {"binary", "base64", "none"}:
             raise OBBGeoDetectionError("INVALID_IMAGE_MODE", "image_mode must be one of binary/base64/none.", 400)
+        if geo_mode not in {"required", "auto", "none"}:
+            raise OBBGeoDetectionError("INVALID_GEO_MODE", "geo_mode must be one of required/auto/none.", 400)
         if image.content_type not in {"image/jpeg", "image/png", "image/jpg"}:
             raise OBBGeoDetectionError("UNSUPPORTED_MEDIA_TYPE", "Only jpg/png are supported.", 415)
         if obj_thresh is not None and not (0 <= obj_thresh <= 1):
@@ -155,6 +158,7 @@ async def detect(
             return_boxes,
             obj_thresh,
             nms_thresh,
+            geo_mode,
         )
         result = fut.result(timeout=config.request_timeout_sec)
         _inc("requests_success_total")
@@ -172,6 +176,7 @@ async def detect(
             "image": result["image"],
             "detections": result.get("detections", []),
             "perf": result.get("perf", {}),
+            "geo_status": result.get("geo_status", "ok"),
             "image_result": {"mode": "none", "value": None},
         }
         if return_image and image_mode == "base64":
