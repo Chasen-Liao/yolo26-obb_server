@@ -4,6 +4,13 @@
 
 **核心能力**：上传航拍/卫星图像，检测任意方向的旋转目标（飞机、船舶等），并直接将检测框中心点映射为经纬度坐标。
 
+[![Python](https://img.shields.io/badge/python-3.13%2B-3776AB)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.45%2B-FF4B4B)](https://streamlit.io)
+[![License](https://img.shields.io/badge/license-UNLICENSED-red)](#)
+
+> **Latest stable**: `v0.1.0` — API 基础配置、异步任务生命周期与 `.env` 模板已就绪；详见 [`README_API.md`](./README_API.md) 与 `docs/superpowers/` 设计文档。
+
 ---
 
 ## 快速体验
@@ -54,6 +61,8 @@ uv run uvicorn obb_geo_api_server:app --host 0.0.0.0 --port 8003 --reload
 └── docs/superpowers/        # 设计文档与计划
 ```
 
+> **配套前端 Agent**：本仓库的 `sample_100_mix/` 样例数据会被同级的 [`@chasen-og/yolo-agent`](https://www.npmjs.com/package/@chasen-og/yolo-agent) 通过 `YOLO26_DEMO_IMAGE_DIR` 读取，提供 `/demo` 命令的可视化样例。推荐两个仓库平级 clone（`yolo26-obb_server/` 与 `yolomercury/`），无需任何额外配置。
+
 ---
 
 ## 技术栈
@@ -93,6 +102,8 @@ cp .env.example .env
 ```bash
 uv run pytest tests/ -q
 ```
+
+> **会话快照**：根目录的 `.tmux_session` 记录了 `yolo-obb-api` 与 `yolo-obb-demo` 两个常用会话名，便于用 `tmuxinator`/`tmuxp` 一键拉起。可按需在 `.gitignore` 中加入 `.tmux_session*` 排除本地变种。
 
 ---
 
