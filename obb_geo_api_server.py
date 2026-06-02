@@ -227,7 +227,7 @@ async def create_detect_job(
         obj_thresh,
         nms_thresh,
     )
-    _save_job(job_id, {"status": "queued", "future": fut, "created_at": int(time.time()), "counted": False})
+    _save_job(job_id, {"status": "queued", "future": fut, "created_at": int(time.time())})
     return {"job_id": job_id, "status": "queued"}
 
 

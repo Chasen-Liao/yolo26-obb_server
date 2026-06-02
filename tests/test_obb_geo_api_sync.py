@@ -160,14 +160,16 @@ def test_get_config_returns_current_config():
 
 def test_patch_config_updates_thresh():
     client = TestClient(app)
-    response = client.patch("/v1/config", json={"obj_thresh": 0.5, "nms_thresh": 0.6})
-    assert response.status_code == 200
-    data = response.json()
-    assert data["updated"] is True
-    assert data["config"]["obj_thresh"] == 0.5
-    assert data["config"]["nms_thresh"] == 0.6
-    # restore
-    client.patch("/v1/config", json={"obj_thresh": 0.25, "nms_thresh": 0.45})
+    try:
+        response = client.patch("/v1/config", json={"obj_thresh": 0.5, "nms_thresh": 0.6})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["updated"] is True
+        assert data["config"]["obj_thresh"] == 0.5
+        assert data["config"]["nms_thresh"] == 0.6
+    finally:
+        # restore even if assertions above fail
+        client.patch("/v1/config", json={"obj_thresh": 0.25, "nms_thresh": 0.45})
 
 
 def test_api_key_rejects_when_set(monkeypatch):

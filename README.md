@@ -103,7 +103,7 @@ cp .env.example .env
 uv run pytest tests/ -q
 ```
 
-> **会话快照**：根目录的 `.tmux_session` 记录了 `yolo-obb-api` 与 `yolo-obb-demo` 两个常用会话名，便于用 `tmuxinator`/`tmuxp` 一键拉起。可按需在 `.gitignore` 中加入 `.tmux_session*` 排除本地变种。
+> **会话快照**：根目录的 `.tmux_session` 记录了 `yolo-obb-api` 与 `yolo-obb-demo` 两个常用会话名，便于用 `tmuxinator`/`tmuxp` 一键拉起。`.gitignore` 已包含 `.tmux_session*`，本地变种不会入库。
 
 ---
 
