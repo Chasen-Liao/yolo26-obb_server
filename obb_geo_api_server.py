@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
+import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Optional
 
 from contextlib import asynccontextmanager
@@ -27,6 +29,11 @@ START_TS = time.time()
 API_KEY = os.getenv("API_KEY", "")
 DEFAULT_RETURN_IMAGE_MODE = os.getenv("RETURN_IMAGE_MODE", "none")
 ASYNC_WORKERS = int(os.getenv("ASYNC_WORKERS", "1"))
+JOB_TTL_SEC = int(os.getenv("JOB_TTL_SEC", "3600"))
+JOB_GC_INTERVAL_SEC = int(os.getenv("JOB_GC_INTERVAL_SEC", "60"))
+_JOB_TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
+
+logger = logging.getLogger("obb_geo_api.gc")
 
 config = OBBGeoDetectionConfig()
 service = OBBGeoService(config)
@@ -46,9 +53,27 @@ metrics = {
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
-    yield
-    service.close()
-    executor.shutdown(wait=False, cancel_futures=True)
+    gc_stop = Event()
+    gc_thread = threading.Thread(
+        target=_jobs_gc_loop,
+        kwargs={
+            "stop_event": gc_stop,
+            "interval_sec": float(JOB_GC_INTERVAL_SEC),
+            "ttl_sec": JOB_TTL_SEC,
+        },
+        name="jobs-gc",
+        daemon=True,
+    )
+    gc_thread.start()
+    try:
+        yield
+    finally:
+        gc_stop.set()
+        gc_thread.join(timeout=5.0)
+        if gc_thread.is_alive():
+            logger.warning("jobs GC thread did not exit within 5s; proceeding anyway")
+        service.close()
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(title="YOLO OBB Geo API", version=APP_VERSION, lifespan=_lifespan)
@@ -93,6 +118,50 @@ def _save_job(job_id: str, data: dict[str, Any]) -> None:
 def _get_job(job_id: str) -> dict[str, Any] | None:
     with job_lock:
         return jobs.get(job_id)
+
+
+def _collect_stale_job_ids(*, now: float, ttl_sec: int) -> list[str]:
+    """Return job ids that are safe to GC right now.
+
+    A job is eligible for GC iff:
+      - its status is terminal (``succeeded`` or ``failed``), AND
+      - its ``created_at`` is older than ``ttl_sec`` seconds before ``now``.
+
+    Holding ``job_lock`` keeps the snapshot consistent with concurrent
+    ``_save_job`` / ``delete`` calls. Result is sorted for deterministic logs.
+    """
+    cutoff = int(now) - ttl_sec
+    with job_lock:
+        stale = sorted(
+            jid
+            for jid, item in jobs.items()
+            if item.get("status") in _JOB_TERMINAL_STATUSES
+            and int(item.get("created_at", 0)) < cutoff
+        )
+    return stale
+
+
+def _jobs_gc_loop(*, stop_event: Event, interval_sec: float, ttl_sec: int) -> None:
+    """Background sweeper. Exits cleanly when ``stop_event`` is set.
+
+    Errors are logged and never propagated — the loop must keep running
+    so a single sweep failure cannot leak memory forever.
+    """
+    logger.info("jobs GC loop started (interval=%.1fs ttl=%ds)", interval_sec, ttl_sec)
+    while not stop_event.is_set():
+        try:
+            stale = _collect_stale_job_ids(now=time.time(), ttl_sec=ttl_sec)
+            if stale:
+                with job_lock:
+                    for jid in stale:
+                        jobs.pop(jid, None)
+                logger.info("GC removed %d stale job(s): %s", len(stale), stale)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("jobs GC sweep failed; will retry next interval")
+        # wait_for returns True early if the event is set, False on timeout
+        if stop_event.wait(interval_sec):
+            break
+    logger.info("jobs GC loop stopped")
 
 
 def _json_safe_result(result: dict[str, Any]) -> dict[str, Any]:
